@@ -1,5 +1,8 @@
 /**
  * based on http://zarb.org/~gc/html/libpng.html
+ *
+ * Compile instructions:
+ * gcc main.c -o main -lpng
  */
 #include <stdio.h>
 #include <stdlib.h>
