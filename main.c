@@ -1,46 +1,77 @@
 /**
  * based on http://zarb.org/~gc/html/libpng.html
- *
- * Compile instructions:
- * gcc main.c -o main -lpng
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
 #include <getopt.h>
+#include <errno.h>
 
 #include <png.h>
 
-#define USAGE 	fprintf (stdout, "Usage: ./stegpng [-e -d] <filename> -m <message>"); exit(0)
+#define USAGE 	fprintf (stdout, "Usage: ./stegpng [-e -d] <filename> [-m] <message>  [-o] new_filename"); exit(EXIT_FAILURE)
 
 #define FREE_ALL	if(!filename)free(filename);\
 					if(!message)free(message);\
 					if(!dst)free(dst)
 
+#define DESTROY_READ_PNG(obj, info) 	(png_destroy_read_struct(&obj, info, NULL))
+#define DESTROY_WRITE_PNG(obj, info) 	(png_destroy_write_struct(&obj, info))
+#define DESTROY_ROW_POINTERS(obj) 		for (int y = 0; y < obj->height; y++){\
+											free (obj->row_pointers[y]); \
+										}\
+										free (obj->row_pointers);\
+
+#define DESTROY_PNG_DATA(obj) 			DESTROY_ROW_POINTERS(obj);\
+										free (obj);\
+
 #define CLEAR_BIT(obj, x) 		(obj&=~(1<<x))
 #define SET_BIT(obj, x) 		(obj|=1<<x)
 #define GET_BIT(obj, x) 		((obj>>x)&1)
 
+
 typedef struct png_d png_data_t;
 struct png_d {
+	char * filename;
 	int width, height;
 	png_byte color_type;
 	png_byte bit_depth;
 	png_bytep * row_pointers;
 };
 
+void
+fatal (png_data_t * data, bool d_data) {
+	fprintf (stderr, "[ERROR] %d: %s - %s", errno, data->filename, strerror (errno));
+	if (!d_data) {
+		DESTROY_PNG_DATA (data);
+	}
+	exit (EXIT_FAILURE);
+}
+
 png_data_t * 
 read_png_file (char *filename) {
 	FILE *fp = fopen (filename, "rb");
+	if (!fp) {
+		return NULL;
+	}
+
 	png_data_t * data;
 	png_structp png_p = png_create_read_struct (PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
-	if (!png_p) abort ();
+	if (!png_p) 
+		return NULL;
 
 	png_infop info = png_create_info_struct (png_p);
-	if (!info) abort ();
+	if (!info) {
+		fclose (fp);
+		return NULL;
+	}
 
-	if (setjmp (png_jmpbuf (png_p))) abort ();
+	if (setjmp (png_jmpbuf (png_p))) {
+		DESTROY_READ_PNG (png_p, &info);
+		fclose (fp);
+		return NULL;
+	}
 
 	png_init_io (png_p, fp);
 
@@ -82,7 +113,7 @@ read_png_file (char *filename) {
 
 	png_read_update_info (png_p, info);
 
-	data->row_pointers = (png_bytep*)malloc (sizeof (png_bytep) * data->height);
+	data->row_pointers = (png_bytep*) malloc (sizeof (png_bytep) * data->height);
 	for (int y = 0; y < data->height; y++) {
 		data->row_pointers[y] = (png_byte*)malloc (png_get_rowbytes (png_p,info));
 	}
@@ -94,20 +125,37 @@ read_png_file (char *filename) {
 	return data;
 }
 
-void 
+bool
 write_png_file (char *filename, png_data_t * data) {
 	int y;
 
 	FILE *fp = fopen (filename, "wb");
-	if (!fp) abort ();
+	if (!fp) {
+		
+		free (data);
+		return false;
+	}
 
 	png_structp png_p = png_create_write_struct (PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
-	if (!png_p) abort ();
+	if (!png_p) {
+		DESTROY_PNG_DATA (data);
+		fclose (fp);
+		return false;
+	}
 
 	png_infop info = png_create_info_struct (png_p);
-	if (!info) abort ();
+	if (!info) {
+		DESTROY_WRITE_PNG (png_p, NULL);
+		DESTROY_PNG_DATA (data);
+		fclose (fp);
+		return false;
+	}
 
-	if (setjmp (png_jmpbuf (png_p))) abort ();
+	if (setjmp (png_jmpbuf (png_p))) {
+		DESTROY_WRITE_PNG (png_p, &info);
+		fclose (fp);
+		return false;
+	}
 
 	png_init_io (png_p, fp);
 
@@ -126,12 +174,9 @@ write_png_file (char *filename, png_data_t * data) {
 	png_write_image (png_p, data->row_pointers);
 	png_write_end (png_p, NULL);
 
-	for (int y = 0; y < data->height; y++) {
-		free (data->row_pointers[y]);
-	}
-	free (data->row_pointers);
-
+	DESTROY_PNG_DATA (data);
 	fclose (fp);
+	return true;
 }
 
 void 
@@ -199,7 +244,7 @@ get_message (png_data_t * data) {
 	}
 }
 
-int main (int argc, char *argv[]) {
+int main (int argc, char ** argv) {
 	
 
 	png_data_t * png_data;
@@ -210,31 +255,34 @@ int main (int argc, char *argv[]) {
 	bool d = false;
 	int c;
 
-
-	if (argc < 3)
+	if (argc < 3) {
 		USAGE;
+	} 
+
+
 	while ((c = getopt (argc, argv, "e:d:m:o:h")) != -1) {
 		switch (c) {
-			case 'e':
+			case 'e': {
 				filename = strdup (optarg);
 				break;
-			case 'd':
+			} case 'd': {
 				d = true;
 				filename =	strdup (optarg); 
 				break;
-			case 'm':
+			} case 'm': {
 				message = (char *) calloc (1, strlen (optarg) + 1);
 				sprintf (message, "%s%c", optarg, 0x08);
 				break;
-			case 'o':
+			} case 'o': {
 				dst = strdup (optarg); 
 				break;
-			case 'h':
+			} case 'h': {
 				USAGE;
 				break;
-			default:
+			} default: {
 				USAGE;
 				break;
+			}
 		}
 	}
 
@@ -243,20 +291,27 @@ int main (int argc, char *argv[]) {
 			FREE_ALL;
 			USAGE;
 		}
-		png_data = read_png_file (filename);
+		if (!(png_data = read_png_file (filename))) {
+			fprintf (stderr, "[ERROR] %d: %s - %s", errno, filename, strerror (errno));
+			exit (EXIT_FAILURE);
+		}
 		process_png_file (png_data, message);
-		write_png_file (dst, png_data);
+		if (!(write_png_file (dst, png_data))) {
+			fprintf (stderr, "[ERROR] %d: %s - %s", errno, filename, strerror (errno));
+			DESTROY_PNG_DATA (png_data);
+			exit (EXIT_FAILURE);
+		}
 	} else {
 		if (!filename) {
 			FREE_ALL;		
 			USAGE;
 		}
-		png_data = read_png_file (filename);
+		if (!(png_data = read_png_file (filename))) {
+			fatal (png_data, false);
+		}
 		get_message (png_data);
 	}
 
 	FREE_ALL;
-
 	return 0;
 }
-
