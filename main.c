@@ -33,100 +33,116 @@
 
 typedef struct png_d png_data_t;
 struct png_d {
-	char * filename;
-	int width, height;
+	int width;
+	int	height;
 	png_byte color_type;
 	png_byte bit_depth;
+
 	png_bytep * row_pointers;
 };
 
 void
-fatal (png_data_t * data, bool d_data) {
-	fprintf (stderr, "[ERROR] %d: %s - %s", errno, data->filename, strerror (errno));
+fatal (char * filename, png_data_t * data, bool d_data) {
+	fprintf (stderr, "[ERROR] %d: %s - %s", errno, filename, strerror (errno));
 	if (!d_data) {
 		DESTROY_PNG_DATA (data);
 	}
 	exit (EXIT_FAILURE);
 }
 
-png_data_t * 
-read_png_file (char *filename) {
-	FILE *fp = fopen (filename, "rb");
-	if (!fp) {
-		return NULL;
-	}
+png_data_t *
+read_png_file(char *filename) {
+	int width;
+	int height;
+	png_byte color_type;
+	png_byte bit_depth;
+	png_bytep * row_pointers;
 
-	png_data_t * data;
-	png_structp png_p = png_create_read_struct (PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
-	if (!png_p) 
-		return NULL;
+  FILE *fp = fopen(filename, "rb");
+  if (!fp) {
+	  perror ("opening the file");
+	  exit (EXIT_FAILURE);
+  }
+  png_data_t * data;
 
-	png_infop info = png_create_info_struct (png_p);
-	if (!info) {
-		fclose (fp);
-		return NULL;
-	}
+  png_structp png_p = png_create_read_struct (PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+  if(!png_p) 
+	  return NULL;
 
-	if (setjmp (png_jmpbuf (png_p))) {
-		DESTROY_READ_PNG (png_p, &info);
-		fclose (fp);
-		return NULL;
-	}
+  png_infop info = png_create_info_struct(png_p);
+  if(!info) {
+	  DESTROY_READ_PNG (png_p, NULL);
+	  fclose (fp);
+	  return NULL;
+  }
 
-	png_init_io (png_p, fp);
+  if(setjmp (png_jmpbuf (png_p) ) ) {
+	  DESTROY_READ_PNG (png_p, &info);
+	  fclose (fp);
+	  return NULL;
+  }
 
-	png_read_info (png_p, info);
-	
-	data = (png_data_t *) calloc (1, sizeof (png_data_t));
-	data->width      = png_get_image_width (png_p, info);
-	data->height     = png_get_image_height (png_p, info);
-	data->color_type = png_get_color_type (png_p, info);
-	data->bit_depth  = png_get_bit_depth (png_p, info);
+  png_init_io(png_p, fp);
 
-	// Read any color_type into 8bit depth, RGBA format.
-	// See http://www.libpng.org/pub/png/libpng-manual.txt
+  png_read_info(png_p, info);
 
-	if (data->bit_depth == 16)
-		png_set_strip_16 (png_p);
+  width      = png_get_image_width(png_p, info);
+  height     = png_get_image_height(png_p, info);
+  color_type = png_get_color_type(png_p, info);
+  bit_depth  = png_get_bit_depth(png_p, info);
 
-	if (data->color_type == PNG_COLOR_TYPE_PALETTE)
-		png_set_palette_to_rgb (png_p);
+  // Read any color_type into 8bit depth, RGBA format.
+  // See http://www.libpng.org/pub/png/libpng-manual.txt
 
-	// PNG_COLOR_TYPE_GRAY_ALPHA is always 8 or 16bit depth.
-	if (data->color_type == PNG_COLOR_TYPE_GRAY && data->bit_depth < 8)
-		png_set_expand_gray_1_2_4_to_8 (png_p);
+  if(bit_depth == 16)
+    png_set_strip_16(png_p);
 
-	if (png_get_valid (png_p, info, PNG_INFO_tRNS))
-		png_set_tRNS_to_alpha (png_p);
+  if(color_type == PNG_COLOR_TYPE_PALETTE)
+    png_set_palette_to_rgb(png_p);
 
-	// fill alpha with 0xff
-	if ( data->color_type == PNG_COLOR_TYPE_RGB ||
-		data->color_type == PNG_COLOR_TYPE_GRAY ||
-	 	data->color_type == PNG_COLOR_TYPE_PALETTE) {
+  // PNG_COLOR_TYPE_GRAY_ALPHA is always 8 or 16bit depth.
+  if(color_type == PNG_COLOR_TYPE_GRAY && bit_depth < 8)
+    png_set_expand_gray_1_2_4_to_8(png_p);
 
-		png_set_filler (png_p, 0xFF, PNG_FILLER_AFTER);
-	}
+  if(png_get_valid(png_p, info, PNG_INFO_tRNS))
+    png_set_tRNS_to_alpha(png_p);
 
-	if (data->color_type == PNG_COLOR_TYPE_GRAY ||
-	   data->color_type == PNG_COLOR_TYPE_GRAY_ALPHA)
-		png_set_gray_to_rgb (png_p);
+  // These color_type don't have an alpha channel then fill it with 0xff.
+  if(color_type == PNG_COLOR_TYPE_RGB ||
+     color_type == PNG_COLOR_TYPE_GRAY ||
+     color_type == PNG_COLOR_TYPE_PALETTE)
+    png_set_filler(png_p, 0xFF, PNG_FILLER_AFTER);
 
-	png_read_update_info (png_p, info);
+  if(color_type == PNG_COLOR_TYPE_GRAY ||
+     color_type == PNG_COLOR_TYPE_GRAY_ALPHA)
+    png_set_gray_to_rgb(png_p);
 
-	data->row_pointers = (png_bytep*) malloc (sizeof (png_bytep) * data->height);
-	for (int y = 0; y < data->height; y++) {
-		data->row_pointers[y] = (png_byte*)malloc (png_get_rowbytes (png_p,info));
-	}
+  png_read_update_info(png_p, info);
 
-	png_read_image (png_p, data->row_pointers);
+  row_pointers = (png_bytep *) malloc (sizeof(png_bytep) * height);
+  for(int y = 0; y < height; y++) {
+  	int row = png_get_rowbytes (png_p, info);
+	//printf ("%d\n\n", row);
+    row_pointers[y] = (png_byte *) malloc (row);
+  }
 
-	fclose (fp);
+  png_read_image(png_p, row_pointers);
 
-	return data;
+
+  data = (png_data_t *) calloc (1, sizeof (png_data_t));
+  data->height = height;
+  data->width = width;
+  data->color_type = color_type;
+  data->bit_depth = bit_depth;
+  data->row_pointers = row_pointers;
+
+  fclose(fp);
+
+  return data;
 }
 
 bool
-write_png_file (char *filename, png_data_t * data) {
+write_png_file (char * filename, png_data_t * data) {
 	int y;
 
 	FILE *fp = fopen (filename, "wb");
@@ -231,7 +247,7 @@ get_message (png_data_t * data) {
 				if (k == 8) {
 					y++;
 					k = 0;
-					if (message[y-1] == '\b' || y == 1024){
+					if (message[y-1] == '\t' || y == 1024){
 						message[y-1] = 0x00;
 						printf ("%s\n", message);
 						return;
@@ -270,8 +286,10 @@ int main (int argc, char ** argv) {
 				filename =	strdup (optarg); 
 				break;
 			} case 'm': {
-				message = (char *) calloc (1, strlen (optarg) + 1);
-				sprintf (message, "%s%c", optarg, 0x08);
+				printf ("%lu\n\n", strlen (optarg));
+				message = (char *) calloc (1, strlen (optarg) + 2);
+				sprintf (message, "%s\t\0", optarg);
+				printf ("%lu\n\n", strlen (message));
 				break;
 			} case 'o': {
 				dst = strdup (optarg); 
@@ -296,9 +314,11 @@ int main (int argc, char ** argv) {
 			exit (EXIT_FAILURE);
 		}
 		process_png_file (png_data, message);
+		free (message);
 		if (!(write_png_file (dst, png_data))) {
 			fprintf (stderr, "[ERROR] %d: %s - %s", errno, filename, strerror (errno));
 			DESTROY_PNG_DATA (png_data);
+			FREE_ALL;
 			exit (EXIT_FAILURE);
 		}
 	} else {
@@ -307,7 +327,7 @@ int main (int argc, char ** argv) {
 			USAGE;
 		}
 		if (!(png_data = read_png_file (filename))) {
-			fatal (png_data, false);
+			fatal (filename, png_data, false);
 		}
 		get_message (png_data);
 	}
