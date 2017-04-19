@@ -10,6 +10,8 @@
 
 #include <png.h>
 
+#define MAX_MSG_SIZE 	4098
+
 #define USAGE 	fprintf (stdout, "Usage: ./stegpng [-e -d] <filename> [-m] <message>  [-o] new_filename"); exit(EXIT_FAILURE)
 
 #define FREE_ALL	if(!filename)free(filename);\
@@ -121,9 +123,8 @@ read_png_file(char *filename) {
 
   row_pointers = (png_bytep *) malloc (sizeof(png_bytep) * height);
   for(int y = 0; y < height; y++) {
-  	int row = png_get_rowbytes (png_p, info);
 	//printf ("%d\n\n", row);
-    row_pointers[y] = (png_byte *) malloc (row);
+    row_pointers[y] = (png_byte *) malloc (	png_get_rowbytes (png_p, info));
   }
 
   png_read_image(png_p, row_pointers);
@@ -226,11 +227,11 @@ process_png_file (png_data_t * data, char * message) {
 
 void 
 get_message (png_data_t * data) {
-	char message [1024];
+	char message [MAX_MSG_SIZE];
 	int k = 0;
 	int y = 0;
 
-	memset (message, 0, 1024);
+	memset (message, 0, MAX_MSG_SIZE);
 
 	for (int y = 0; y < data->height; y++) {
 		png_bytep row = data->row_pointers[y];
@@ -245,11 +246,18 @@ get_message (png_data_t * data) {
 
 				k++;
 				if (k == 8) {
+					if (y == 0 && (message [y] < 0 || message [y] > 127)) {
+							printf ("[!!] No hidden message found [!!]\n");
+						return;
+					}
 					y++;
 					k = 0;
-					if (message[y-1] == '\t' || y == 1024){
+					if (message[y-1] == '\t'){
 						message[y-1] = 0x00;
 						printf ("%s\n", message);
+						return;
+					} else if (y == MAX_MSG_SIZE) {
+						printf ("[!!] No hidden message found [!!]\n");
 						return;
 					}
 				}
